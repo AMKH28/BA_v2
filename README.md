@@ -70,6 +70,80 @@ Das Projekt ist so aufgebaut, dass es von einem Proxmox-Lab in ein Netz hinter e
 - Control-Node mit Terraform, Ansible, `jq`, der Ansible-Collection `kubernetes.core` und dem Paket `python3-kubernetes`
 - SSH-Key der Control-Node, dessen Public Key per Cloud-Init in die VMs gelangt
 
+## Einmalige Vorbereitung
+
+Diese zwei Schritte werden pro Umgebung einmal gemacht und danach nicht wiederholt.
+
+### 1. VM-Template mit QEMU Guest Agent
+
+Auf dem Proxmox-Host. Das Template ist die Grundlage für alle Cluster-Nodes. Der Guest Agent ist darin vorinstalliert, damit Proxmox und Terraform die IP-Adresse jeder geklonten VM abfragen können.
+
+```bash
+export LIBGUESTFS_BACKEND=direct
+BRIDGE=vmbr1          # Bridge der Umgebung
+STORAGE=local-lvm     # Storage-Pool der Umgebung
+VMID=9000
+
+cd /var/lib/vz/template/iso
+wget https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-amd64.img
+
+apt install -y libguestfs-tools
+virt-customize -a jammy-server-cloudimg-amd64.img \
+  --install qemu-guest-agent \
+  --run-command 'systemctl enable qemu-guest-agent' \
+  --truncate /etc/machine-id
+
+qm create $VMID --name ubuntu-2204-tpl --memory 2048 --cores 2 \
+  --net0 virtio,bridge=$BRIDGE --agent enabled=1 \
+  --scsihw virtio-scsi-pci --ostype l26
+qm importdisk $VMID jammy-server-cloudimg-amd64.img $STORAGE
+qm set $VMID --scsi0 $STORAGE:vm-$VMID-disk-0
+qm set $VMID --ide2 $STORAGE:cloudinit
+qm set $VMID --boot order=scsi0 --serial0 socket --vga serial0
+qm set $VMID --ipconfig0 ip=dhcp
+qm template $VMID
+```
+
+Wichtig sind `--agent enabled=1` (sonst liefert Proxmox keine IP zurück) und das Leeren der `/etc/machine-id` (sonst können geklonte VMs dieselbe DHCP-Client-ID bekommen). Hinter einem Proxy braucht der Host für `wget` und `virt-customize` ggf. ebenfalls die Proxy-Variablen.
+
+### 2. Control-Node
+
+Von dieser VM aus laufen Terraform und Ansible. Sie wird einmal aus demselben Ubuntu-Cloud-Image erzeugt (2 vCPU, 2 GB RAM, 20 GB Disk) und bekommt per Cloud-Init den Benutzer `ubuntu` und einen SSH-Key. Ihre IP ist fest, weil sie der Einstiegspunkt ist.
+
+```bash
+VMID=200
+STORAGE=local-lvm
+BRIDGE=vmbr0
+IP=192.0.2.10/24
+GATEWAY=192.0.2.1
+
+qm create $VMID --name control-node --memory 2048 --cores 2 \
+  --net0 virtio,bridge=$BRIDGE
+qm importdisk $VMID ubuntu-22.04-cloudimg.img $STORAGE
+qm set $VMID --scsihw virtio-scsi-pci --scsi0 $STORAGE:vm-$VMID-disk-0
+qm set $VMID --ide2 $STORAGE:cloudinit
+qm set $VMID --boot order=scsi0 --serial0 socket --vga serial0
+qm set $VMID --ipconfig0 ip=$IP,gw=$GATEWAY
+qm set $VMID --ciuser ubuntu --sshkeys ~/.ssh/authorized_keys
+qm resize $VMID scsi0 20G
+qm start $VMID
+```
+
+Auf der Control-Node werden danach installiert:
+
+- Terraform
+- Ansible 
+- `jq` und `git`
+- Collection und Python-Bibliothek für die Kubernetes-Module:
+
+```bash
+ansible-galaxy collection install kubernetes.core
+sudo apt install -y python3-kubernetes
+```
+
+Die Control-Node braucht einen SSH-Schlüssel (`~/.ssh/id_ed25519`). Der Public Key landet über Cloud-Init in allen Cluster-VMs, und Ansible nutzt ihn für den Zugriff.
+
+
 ## Benutzung
 
 Token in `terraform/secrets.auto.tfvars` ablegen (liegt nicht im Repository):
@@ -91,15 +165,13 @@ ansible all -m ping
 ansible-playbook ansible/site.yml
 ```
 
-Prüfen auf dem Server-Node:
+Prüfen auf dem Server-Node (nach einem neuen SSH-Login, denn `kubectl` und `KUBECONFIG` werden von Ansible über `/etc/profile.d/rke2.sh` bereitgestellt):
 
 ```bash
-export PATH=$PATH:/var/lib/rancher/rke2/bin
-export KUBECONFIG=/etc/rancher/rke2/rke2.yaml
 kubectl get nodes
 ```
 
-## Einsatz im Firmennetz hinter einem Proxy
+## Einsatz im Netz hinter einem Proxy
 
 Alle umgebungsspezifischen Werte stehen in `ansible/inventory/group_vars/all.yml`. Der Proxy ist im Standard ausgeschaltet und wird per Variable aktiviert:
 
