@@ -1,0 +1,57 @@
+---
+- name: Inventory aus Terraform erzeugen
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: generate_inventory.sh ausführen
+      command: "{{ playbook_dir }}/inventory/generate_inventory.sh"
+      changed_when: false
+
+    - name: Inventory neu laden
+      meta: refresh_inventory
+
+- name: Auf erreichbare Nodes und fertiges Cloud-Init warten
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Auf SSH warten
+      wait_for_connection:
+        timeout: 300
+
+    - name: Cloud-Init abschließen lassen
+      command: cloud-init status --wait
+      register: ci
+      changed_when: false
+      failed_when: ci.rc not in [0, 2]
+      become: yes
+
+- name: Common-Setup auf allen Nodes anwenden
+  hosts: all
+  become: yes
+  roles:
+    - common
+
+- name: RKE2-Server installieren
+  hosts: server
+  become: yes
+  roles:
+    - rke2-server
+
+- name: RKE2-Agent installieren (Worker und Storage-Node)
+  hosts: agent:storage
+  become: yes
+  roles:
+    - rke2-agent
+
+- name: Storage-Node taggen und isolieren
+  hosts: storage
+  become: yes
+  roles:
+    - rke2-storage
+
+- name: Longhorn installieren
+  hosts: server
+  become: yes
+  roles:
+    - longhorn

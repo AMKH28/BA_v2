@@ -1,0 +1,44 @@
+---
+- name: Python-Kubernetes-Bibliothek auf dem Server-Node installieren   # NEU — wird gebraucht, weil k8s_taint/kubectl-Tasks gleich per delegate_to AUF rke2-server-01 laufen, nicht auf der control-node
+  apt:
+    name: python3-kubernetes                                            # Über apt statt pip — vermeidet das "externally-managed-environment"-Problem von eben, sauberer auf einem frisch provisionierten Node
+    state: present
+    update_cache: yes
+  delegate_to: rke2-server-01                                            # Muss auf demselben Host installiert werden, auf dem gleich k8s_taint läuft
+  become: yes                                                            # apt install braucht Root-Rechte
+
+- name: Warten, bis der Storage-Node in Kubernetes registriert ist
+  command: >
+    /var/lib/rancher/rke2/bin/kubectl
+    --kubeconfig /etc/rancher/rke2/rke2.yaml
+    get node rke2-storage-01
+  register: node_check
+  until: node_check.rc == 0
+  retries: 12
+  delay: 10
+  changed_when: false
+  delegate_to: rke2-server-01
+
+- name: Storage-Node mit Taint versehen                                  # Verhindert, dass Kubernetes normale App-Pods auf diesem Node einplant
+  kubernetes.core.k8s_taint:                                             # Offizielles Ansible-Modul für Node-Taints — spricht direkt mit der Kubernetes-API
+    name: rke2-storage-01                                                # Der genaue Node-Name, wie in "kubectl get nodes" zu sehen
+    taints:
+      - key: node-role.kubernetes.io/storage                            # Frei gewählter Schlüssel, folgt Kubernetes-Konvention "node-role.kubernetes.io/<rolle>"
+        value: "true"
+        effect: NoSchedule                                              # "NoSchedule" = neue Pods werden hier NICHT eingeplant, es sei denn sie tolerieren den Taint explizit. Bestehende Pods werden nicht vertrieben (das würde "NoExecute" machen — hier bewusst nicht gewählt, zu aggressiv für unseren Zweck)
+    state: present
+  delegate_to: rke2-server-01                                           # WICHTIG: der Taint-Befehl muss gegen die Kubernetes-API laufen, die nur auf dem Server-Node erreichbar ist (kubeconfig liegt dort) — "delegate_to" führt diese eine Task auf einem ANDEREN Host aus als dem, den die Rolle eigentlich gerade behandelt
+  environment:
+    KUBECONFIG: /etc/rancher/rke2/rke2.yaml                             # Sagt dem k8s-Modul, wo die Zugangsdaten liegen — ohne das wüsste es nicht, mit welchem Cluster/Zugang es reden soll
+
+- name: Storage-Node zusätzlich labeln                                   # Label ist NICHT dasselbe wie Taint — Taint verhindert Scheduling, Label ist nur eine Markierung, die Longhorn später per nodeSelector gezielt ansprechen kann
+  command: >
+    /var/lib/rancher/rke2/bin/kubectl
+    --kubeconfig /etc/rancher/rke2/rke2.yaml
+    label node rke2-storage-01
+    node-role.kubernetes.io/storage=true
+    node.longhorn.io/create-default-disk=true
+    --overwrite
+  register: label_result
+  changed_when: "'not labeled' not in label_result.stdout"
+  delegate_to: rke2-server-01

@@ -1,0 +1,12 @@
+# Secrets
+secrets.auto.tfvars
+*.auto.tfvars
+
+# Terraform State und Provider
+*.tfstate
+*.tfstate.*
+.terraform/
+crash.log
+
+# Generiertes Inventory
+ansible/inventory/hosts.ini

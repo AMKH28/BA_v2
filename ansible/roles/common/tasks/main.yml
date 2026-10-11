@@ -1,0 +1,71 @@
+---
+# Jede Aufgabe hat einen "name" (Klartext-Beschreibung, erscheint im Terminal-Output)
+# und ein Modul (z.B. "apt", "sysctl") mit dessen Parametern
+
+- name: Proxy-Umgebungsvariablen systemweit setzen
+  blockinfile:
+    path: /etc/environment
+    block: |
+      http_proxy="{{ proxy_url }}"
+      https_proxy="{{ proxy_url }}"
+      HTTP_PROXY="{{ proxy_url }}"
+      HTTPS_PROXY="{{ proxy_url }}"
+      no_proxy="localhost,127.0.0.1,::1,{{ node_cidr }},10.244.0.0/16,10.192.168.0/24,10.96.0.0/12,.svc,.cluster.local"
+      NO_PROXY="localhost,127.0.0.1,::1,{{ node_cidr }},10.244.0.0/16,10.192.168.0/24,10.96.0.0/12,.svc,.cluster.local"
+  when: proxy_enabled | bool
+
+- name: APT-Proxy konfigurieren
+  copy:
+    dest: /etc/apt/apt.conf.d/95proxy
+    content: |
+      Acquire::http::Proxy "{{ proxy_url }}";
+      Acquire::https::Proxy "{{ proxy_url }}";
+  when: proxy_enabled | bool
+
+- name: APT-Cache aktualisieren                      # Sorgt dafür, dass Ansible die neueste Paketliste kennt, bevor es was installiert
+  apt:
+    update_cache: yes                                 # Entspricht "apt update"
+    cache_valid_time: 3600                            # Überspringt das Update, falls der Cache jünger als 1h ist — spart Zeit bei wiederholten Playbook-Läufen
+
+- name: Swap deaktivieren (Kubernetes-Anforderung)    # Kubernetes/RKE2 verlangt zwingend deaktivierten Swap — sonst startet kubelet gar nicht erst
+  command: swapoff -a                                 # Deaktiviert Swap SOFORT für die laufende Session
+  changed_when: false                                 # Sagt Ansible "zeig das nicht als 'geändert' an" — swapoff hat kein zuverlässiges Erfolgs-Flag, das Ansible auswerten könnte
+
+- name: Swap dauerhaft deaktivieren (übersteht Reboot) # swapoff allein hält nur bis zum nächsten Neustart — das hier verhindert, dass Swap beim Boot wieder aktiviert wird
+  replace:
+    path: /etc/fstab                                  # /etc/fstab enthält die Boot-Zeit-Mount-Konfiguration
+    regexp: '^([^#].*\sswap\s.*)$'                     # Sucht jede aktive (nicht auskommentierte) Zeile, die "swap" enthält
+    replace: '# \1'                                    # Kommentiert die Zeile aus, statt sie zu löschen — reversibel, falls du Swap je wieder brauchst
+
+- name: Kernel-Module für Kubernetes-Netzwerk laden    # overlay + br_netfilter werden von Containerd/Calico für Netzwerk-Namespaces gebraucht
+  modprobe:
+    name: "{{ item }}"
+    state: present
+  loop:                                                # Führt die Aufgabe zweimal aus, einmal pro Listenelement
+    - overlay
+    - br_netfilter
+
+- name: Kernel-Module dauerhaft beim Boot laden        # modprobe allein gilt nur bis zum nächsten Reboot — das hier trägt es in die Boot-Konfiguration ein
+  copy:
+    dest: /etc/modules-load.d/k8s.conf                 # Standard-Ort, den Ubuntu beim Boot automatisch einliest
+    content: |
+      overlay
+      br_netfilter
+
+- name: Netzwerk-Sysctl-Parameter setzen für Kubernetes  # Kubernetes braucht bestimmte Kernel-Netzwerkeinstellungen, sonst funktioniert das Pod-Netzwerk (Calico) nicht korrekt
+  sysctl:
+    name: "{{ item.name }}"
+    value: "{{ item.value }}"
+    sysctl_set: yes                                    # Setzt den Wert sofort im laufenden Kernel
+    state: present
+    reload: yes                                         # Wendet die Änderung sofort an (entspricht "sysctl --system")
+  loop:
+    - { name: "net.bridge.bridge-nf-call-iptables", value: "1" }   # Erlaubt iptables, Bridge-Traffic zu sehen — nötig für Pod-zu-Pod-Kommunikation über Calico
+    - { name: "net.ipv4.ip_forward", value: "1" }                   # Erlaubt IP-Weiterleitung — jeder Node muss zwischen Pods routen können
+
+- name: Basis-Pakete installieren                        # curl/open-iscsi werden gleich für RKE2-Install-Script bzw. später für Longhorn gebraucht
+  apt:
+    name:
+      - curl                                              # Wird vom offiziellen RKE2-Installations-Script benötigt
+      - open-iscsi                                        # Longhorn (Storage, kommt in Phase 4) braucht das für Volume-Attachment — installieren wir gleich mit, spart einen späteren Ansible-Lauf
+    state: present

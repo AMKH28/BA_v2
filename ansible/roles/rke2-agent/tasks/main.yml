@@ -1,0 +1,49 @@
+---
+- name: RKE2-Agent-Installationsscript herunterladen und ausführen     # Gleiches Install-Script wie beim Server, aber INSTALL_RKE2_TYPE steuert, welche Variante installiert wird
+  shell: curl -sfL https://get.rke2.io | INSTALL_RKE2_TYPE="agent" sh -  # Umgebungsvariable "agent" statt Standard — installiert den rke2-agent-Service statt rke2-server
+  environment:
+    INSTALL_RKE2_VERSION: "{{ rke2_version }}"
+  args:
+    creates: /usr/local/bin/rke2                                        # Gleiche Idempotenz-Absicherung wie beim Server
+
+- name: Konfigurationsordner für RKE2 anlegen
+  file:
+    path: /etc/rancher/rke2
+    state: directory
+    mode: '0755'
+
+- name: RKE2-Agent-Konfiguration schreiben                              # Agent braucht ANDERE Config als der Server: statt CNI/CIDR-Einstellungen braucht er, WO der Server ist und WOMIT er sich ausweist
+  copy:
+    dest: /etc/rancher/rke2/config.yaml
+    content: |
+      server: https://{{ rke2_server_address }}:9345
+      token: "{{ hostvars['rke2-server-01']['rke2_token'] }}"                  # Der Token, den die rke2-server-Rolle per set_fact gesetzt hat — genau hier wird er "abgeholt"
+    mode: '0644'
+# NEU
+- name: Verzeichnis für RKE2-Agent systemd-Drop-in anlegen
+  file:
+    path: /etc/systemd/system/rke2-agent.service.d
+    state: directory
+    mode: '0755'
+  when: proxy_enabled | bool
+
+- name: Proxy-Umgebungsvariablen für RKE2-Agent-systemd-Service setzen
+  copy:
+    dest: /etc/systemd/system/rke2-agent.service.d/http-proxy.conf
+    content: |
+      [Service]
+      Environment="HTTP_PROXY={{ proxy_url }}"
+      Environment="HTTPS_PROXY={{ proxy_url }}"
+      Environment="NO_PROXY=localhost,127.0.0.1,{{ node_cidr }},10.244.0.0/16,10.192.168.0/24,10.96.0.0/12,.svc,.cluster.local"
+    mode: '0644'
+  when: proxy_enabled | bool
+  notify: rke2-agent systemd neu laden
+
+- name: Handler ausführen, bevor der Service startet
+  meta: flush_handlers
+
+- name: RKE2-Agent-Service aktivieren und starten
+  systemd:
+    name: rke2-agent                                                    # Anderer Service-Name als beim Server ("rke2-agent" statt "rke2-server")
+    enabled: yes
+    state: started

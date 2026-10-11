@@ -1,0 +1,4 @@
+---
+- name: rke2-agent systemd neu laden
+  systemd:
+    daemon_reload: yes
