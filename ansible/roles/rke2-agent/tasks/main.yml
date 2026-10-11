@@ -19,7 +19,7 @@
       server: https://{{ rke2_server_address }}:9345
       token: "{{ hostvars['rke2-server-01']['rke2_token'] }}"                  # Der Token, den die rke2-server-Rolle per set_fact gesetzt hat — genau hier wird er "abgeholt"
     mode: '0644'
-# NEU
+# ----------------
 - name: Verzeichnis für RKE2-Agent systemd-Drop-in anlegen
   file:
     path: /etc/systemd/system/rke2-agent.service.d

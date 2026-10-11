@@ -1,34 +1,34 @@
 ---
-- name: RKE2-Server-Installationsscript herunterladen und ausführen   # Offizielles Rancher-Install-Script — erkennt automatisch OS/Architektur und installiert das richtige RKE2-Binary + systemd-Service
-  shell: curl -sfL https://get.rke2.io | sh -                         # "-sfL": silent, fail-on-error, follow-redirects — Standard-Flags für Install-Scripts dieser Art
+- name: RKE2-Server-Installationsscript herunterladen und ausführen   # Offizielles Rancher-Install-Script: erkennt automatisch OS/Architektur und installiert das richtige RKE2-Binary + systemd-Service
+  shell: curl -sfL https://get.rke2.io | sh -                         # "-sfL": silent, fail-on-error, follow-redirects. Standard-Flags für Install-Scripts dieser Art
   environment:
     INSTALL_RKE2_VERSION: "{{ rke2_version }}"
   args:
-    creates: /usr/local/bin/rke2                                       # WICHTIG für Idempotenz: prüft VOR der Ausführung, ob diese Datei schon existiert — falls ja, wird die Task übersprungen (kein erneuter Download/Install bei wiederholten Playbook-Läufen)
+    creates: /usr/local/bin/rke2                                       # WICHTIG für Idempotenz: prüft VOR der Ausführung, ob diese Datei schon existiert — falls ja, wird die Task übersprungen (kein erneuter Download/Install)
 
 - name: Konfigurationsordner für RKE2 anlegen                          # RKE2 erwartet seine Config an einem festen Pfad, existiert nach der Installation noch nicht automatisch
   file:
     path: /etc/rancher/rke2
-    state: directory                                                    # "directory" = Ordner anlegen, falls nicht vorhanden (idempotent — passiert nichts, falls er schon existiert)
+    state: directory                                                    # "directory" = Ordner anlegen, falls nicht vorhanden (idempotent: passiert nichts, falls er schon existiert)
     mode: '0755'                                                        # Standard-Rechte: Owner voll, andere nur lesen/betreten
 
-- name: RKE2-Server-Konfiguration schreiben                            # Legt fest, WIE der RKE2-Server sich verhält (Netzwerk-CIDRs etc.)
+- name: RKE2-Server-Konfiguration schreiben                            # Legt fest, WIE der RKE2-Server sich verhält 
   copy:
     dest: /etc/rancher/rke2/config.yaml
     content: |
-      cni: calico                                                       # Erzwingt Calico als CNI-Plugin statt RKE2s Standard (Canal) — passt zu unserer Architekturentscheidung
-      cluster-cidr: 10.244.0.0/16                                       # Pod-Netzwerk — exakt der Wert, den wir in Phase 1 gewählt haben, um Konflikte mit dem Heimnetz zu vermeiden
-      service-cidr: 10.96.0.0/12                                        # Service-Netzwerk (ClusterIPs) — Standard-kubeadm-Wert, den wir übernommen haben
-      write-kubeconfig-mode: "0644"                                     # Macht die erzeugte kubeconfig-Datei für alle lesbar — praktisch im Lab, in Produktion würde man das enger fassen
+      cni: calico                                                       # Erzwingt Calico als CNI-Plugin statt RKE2s Standard (Canal):  passt zu unserer Architekturentscheidung
+      cluster-cidr: 10.244.0.0/16                                       # Pod-Netzwerk: exakt der Wert, den wir in Phase 1 gewählt haben, um Konflikte mit dem Heimnetz zu vermeiden
+      service-cidr: 10.96.0.0/12                                        # Service-Netzwerk (ClusterIPs):  Standard-kubeadm-Wert, den wir übernommen haben
+      write-kubeconfig-mode: "0644"                                     # Macht die erzeugte kubeconfig-Datei für alle lesbar:  praktisch im Lab, in Produktion würde man das enger fassen
     mode: '0644'
-# NEU: systemd-Drop-in-Verzeichnis für den Proxy anlegen
+# systemd-Drop-in-Verzeichnis für den Proxy anlegen
 - name: Verzeichnis für RKE2-Server systemd-Drop-in anlegen
   file:
     path: /etc/systemd/system/rke2-server.service.d
     state: directory
     mode: '0755'
   when: proxy_enabled | bool
-# NEU: Proxy für containerd/RKE2-Server selbst (Image-Pulls!)
+# Proxy für containerd/RKE2-Server selbst (Image-Pulls!)
 - name: Proxy-Umgebungsvariablen für RKE2-Server-systemd-Service setzen
   copy:
     dest: /etc/systemd/system/rke2-server.service.d/http-proxy.conf
@@ -44,23 +44,23 @@
 - name: Handler ausführen, bevor der Service startet
   meta: flush_handlers
 
-- name: RKE2-Server-Service aktivieren und starten                     # systemd-Service, den das Install-Script angelegt hat, aber noch nicht automatisch startet
+- name: RKE2-Server-Service aktivieren und starten                     # systemd-Service, den das Install-Script angelegt hat, (noch nicht automatisch gestartet)
   systemd:
     name: rke2-server
     enabled: yes                                                        # Sorgt dafür, dass RKE2 auch nach einem Reboot automatisch wieder startet
     state: started                                                      # Startet den Service jetzt sofort
 
-- name: Warten, bis RKE2-Server wirklich bereit ist                     # Der erste Start dauert oft 30-60s (Zertifikate generieren, etcd initialisieren) — ohne diesen Wait würden nachfolgende Tasks (Token auslesen) zu früh laufen
+- name: Warten, bis RKE2-Server wirklich bereit ist                     # Der erste Start dauert oft 30-60s (Zertifikate generieren, etcd initialisieren). ohne diesen Wait würden nachfolgende Tasks (Token auslesen) zu früh laufen
   wait_for:
     path: /var/lib/rancher/rke2/server/node-token                       # Diese Datei existiert erst, sobald der Server-Prozess wirklich durchgestartet ist
-    timeout: 120                                                        # Bricht mit Fehler ab, falls nach 2 Minuten immer noch nichts da ist — besser ein klarer Fehler als ewiges Hängen
+    timeout: 120                                                        # Bricht mit Fehler ab, falls nach 2 Minuten immer noch nichts da ist.
 
 - name: Node-Token auslesen                                             # Diesen Token brauchen die Agent-Nodes gleich, um dem Cluster beizutreten
-  slurp:                                                                 # "slurp" liest eine Datei komplett ein (Base64-kodiert) — Standard-Ansible-Weg, um Dateiinhalte zwischen Hosts weiterzugeben
+  slurp:                                                                 # "slurp" liest eine Datei komplett ein (Base64-kodiert): Standard-Ansible-Weg, um Dateiinhalte zwischen Hosts weiterzugeben
     src: /var/lib/rancher/rke2/server/node-token
   register: rke2_token_raw                                              # Speichert das Ergebnis in einer Variable für die nächste Task
 
-- name: Token als Fact für andere Hosts verfügbar machen                # set_fact macht die Variable im GESAMTEN Playbook-Lauf verfügbar, auch für die rke2-agent-Rolle gleich danach — nicht nur lokal auf diesem Host
+- name: Token als Fact für andere Hosts verfügbar machen                # set_fact macht die Variable im GESAMTEN Playbook-Lauf verfügbar, auch für die rke2-agent-Rolle gleich danach. nicht nur lokal
   set_fact:
     rke2_token: "{{ rke2_token_raw.content | b64decode | trim }}"       # b64decode: entschlüsselt slurp's Base64 zurück in Klartext; trim: entfernt den Zeilenumbruch am Ende der Token-Datei
 

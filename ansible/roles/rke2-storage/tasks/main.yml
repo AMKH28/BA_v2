@@ -1,7 +1,7 @@
 ---
-- name: Python-Kubernetes-Bibliothek auf dem Server-Node installieren   # NEU — wird gebraucht, weil k8s_taint/kubectl-Tasks gleich per delegate_to AUF rke2-server-01 laufen, nicht auf der control-node
+- name: Python-Kubernetes-Bibliothek auf dem Server-Node installieren   #  weil k8s_taint/kubectl-Tasks gleich per delegate_to AUF rke2-server-01 laufen, nicht auf der control-node
   apt:
-    name: python3-kubernetes                                            # Über apt statt pip — vermeidet das "externally-managed-environment"-Problem von eben, sauberer auf einem frisch provisionierten Node
+    name: python3-kubernetes                                            # Über apt um das "externally-managed-environment"-Problem von eben zu vermeiden, sauberer auf einem frisch provisionierten Node
     state: present
     update_cache: yes
   delegate_to: rke2-server-01                                            # Muss auf demselben Host installiert werden, auf dem gleich k8s_taint läuft

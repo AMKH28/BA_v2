@@ -40,7 +40,7 @@
             value: "true"
             effect: NoSchedule
       persistence:
-        defaultClassReplicaCount: 1                                       # Nur 1 Replika statt Standard 3 — wir haben nur einen Storage-Node, mehr Replikate würden ohnehin auf demselben Node landen
+        defaultClassReplicaCount: 1                                       # Nur 1 Replika statt Standard 3. weil nur einen Storage-Nodegebraucht wird, mehr Replikate würden ohnehin auf demselben Node landen
   delegate_to: rke2-server-01
   environment:
     KUBECONFIG: /etc/rancher/rke2/rke2.yaml

@@ -1,10 +1,10 @@
-# Lab-Defaults. Firma: -e proxy_enabled=true -e node_cidr=10.192.168.0/24
+# Lab-Defaults. Netz hinter Proxy: -e proxy_enabled=true -e node_cidr=10.192.168.0/24
 proxy_enabled: false
 proxy_url: "http://10.2.0.137:8080"
 node_cidr: "10.10.10.0/24"
 
 # Adresse, über die Agents den Server erreichen.
-# Firma: hier einen DNS-Namen eintragen, falls die Server-IP wechseln kann.
+# hier ein DNS-Namen eintragen, falls die Server-IP wechseln kann.
 rke2_server_address: "{{ hostvars[groups['server'][0]]['ansible_host'] }}"
 
 #Für Pythonsversionsnummer 

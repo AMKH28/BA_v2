@@ -1,6 +1,4 @@
 ---
-# Jede Aufgabe hat einen "name" (Klartext-Beschreibung, erscheint im Terminal-Output)
-# und ein Modul (z.B. "apt", "sysctl") mit dessen Parametern
 
 - name: Proxy-Umgebungsvariablen systemweit setzen
   blockinfile:
