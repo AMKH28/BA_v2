@@ -210,3 +210,66 @@ Beim Umzug in eine andere Umgebung ändern sich außerdem nur diese Werte:
 ## Nicht im Repository
 
 `secrets.auto.tfvars`, Terraform-State, `.terraform/` und die generierte `hosts.ini` stehen in der `.gitignore`.
+
+
+## Monitoring: Prometheus und Grafana
+
+Prometheus und Grafana werden mit dem Helm-Chart `kube-prometheus-stack` auf dem Server-Node installiert.
+
+```bash
+helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+helm repo update
+
+helm install monitoring prometheus-community/kube-prometheus-stack \
+  -n monitoring --create-namespace \
+  -f monitoring-values.yaml --wait --timeout 10m
+```
+
+`monitoring-values.yaml`
+
+```yaml
+alertmanager:
+  enabled: false
+kubeEtcd:
+  enabled: false
+kubeScheduler:
+  enabled: false
+kubeControllerManager:
+  enabled: false
+kubeProxy:
+  enabled: false
+prometheus-node-exporter:
+  tolerations:
+    - operator: Exists
+prometheus:
+  prometheusSpec:
+    retention: 3d
+    resources:
+      requests:
+        memory: 400Mi
+      limits:
+        memory: 800Mi
+grafana:
+  adminPassword: "PASSWORT"
+  service:
+    type: NodePort
+    nodePort: 30300
+  resources:
+    requests:
+      memory: 256Mi
+    limits:
+      memory: 512Mi
+```
+
+Die Werte sind auf die kleinen Lab-Nodes (3 GB RAM) abgestimmt:
+
+- **Alertmanager und die Control-Plane-Komponenten (etcd, Scheduler, Controller-Manager, kube-proxy) sind abgeschaltet.** Das spart RAM, und RKE2 stellt deren Metriken anders bereit, als das Chart erwartet.
+- **Node-Exporter mit Toleration:** Er läuft damit auch auf dem getainteten Storage-Node.
+- **Speicherlimit für Grafana:** 256 Mi waren zu knapp, der Container wurde mit `OOMKilled` beendet. Mit 512 Mi läuft er stabil.
+- **Grafana als NodePort (30300):** erreichbar auf jedem Node unter diesem Port.
+
+Kontrolle der Installation:
+
+```bash
+kubectl get pods -n monitoring
+```
