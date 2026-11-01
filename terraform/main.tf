@@ -22,5 +22,4 @@ module "rke2_nodes" {
   cores  = each.value.cores
   memory = each.value.memory
   disk   = each.value.disk
-  role   = each.value.role
 }
